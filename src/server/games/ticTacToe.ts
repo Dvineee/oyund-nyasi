@@ -4,6 +4,7 @@ import { Room } from "../services/roomManager.ts";
 export interface GameModule {
   init(room: Room): void;
   handleMove(socketId: string, room: Room, io: Server, data: any): void;
+  [key: string]: any;
 }
 
 /**
@@ -75,15 +76,4 @@ export const TicTacToeGame: GameModule = {
       });
     }
   }
-};
-
-import { TicTacToeGame } from "./ticTacToe.ts";
-import { RockPaperScissorsGame } from "./rockPaperScissors.ts";
-
-/**
- * Oyun Fabrikası (Yeni oyunlar buraya eklenir)
- */
-export const GameEngine: Record<string, any> = {
-  tictactoe: TicTacToeGame,
-  rps: RockPaperScissorsGame
 };

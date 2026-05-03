@@ -47,7 +47,10 @@ class SoundManager {
 }
 
 const sounds = new SoundManager();
-const socket: Socket = io();
+const socket: Socket = io({
+  transports: ["websocket"],
+  upgrade: false
+});
 
 // State
 let myId = "";
@@ -288,7 +291,7 @@ function initTicTacToe(room: any) {
   `;
 
   document.querySelectorAll(".cell").forEach(cell => {
-    cell.onclick = () => {
+    (cell as HTMLElement).onclick = () => {
        const index = (cell as HTMLElement).dataset.index;
        socket.emit("make_move", { index: Number(index) });
        sounds.playClick();
@@ -423,7 +426,7 @@ function initRPS(room: any) {
   `;
 
   document.querySelectorAll(".rps-btn").forEach(btn => {
-    btn.onclick = () => {
+    (btn as HTMLElement).onclick = () => {
       const move = (btn as HTMLElement).dataset.move;
       socket.emit("make_move", { move });
       btn.classList.add("bg-accent/20", "border-accent", "shadow-[0_0_20px_var(--color-accent-glow)]");

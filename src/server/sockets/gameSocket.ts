@@ -1,7 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { roomManager } from "../services/roomManager.ts";
 
-import { GameEngine } from "../games/ticTacToe.ts";
+import { GameEngine } from "../games/engine.ts";
 
 /**
  * Ana Socket.io Handler Fonksiyonu
