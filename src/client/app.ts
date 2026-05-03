@@ -61,7 +61,12 @@ function sendMessage() {
 }
 
 leaveRoomBtn.onclick = () => {
-  location.reload(); // Simple way to reset state for now
+  socket.emit("leave_room");
+  roomScreen.classList.add("hidden");
+  lobbyScreen.classList.remove("hidden");
+  currentRoom = null;
+  gameContainer.innerHTML = "";
+  chatMessages.innerHTML = "";
 };
 
 // --- Socket Events ---
@@ -99,6 +104,10 @@ socket.on("room_created", (room: any) => {
 });
 
 socket.on("player_joined", (room: any) => {
+  renderRoom(room);
+});
+
+socket.on("player_left", (room: any) => {
   renderRoom(room);
 });
 
