@@ -11,9 +11,12 @@
         "players": { "type": "array", "items": { "type": "string" } },
         "gameType": { "type": "string" },
         "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "state": { "type": "object" },
+        "turn": { "type": "string" },
+        "winner": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "name", "hostId", "players", "gameType", "status", "createdAt"]
+      "required": ["id", "name", "hostId", "players", "gameType", "status", "createdAt", "state"]
     },
     "Chat": {
       "title": "Chat Message",

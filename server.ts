@@ -1,44 +1,20 @@
 import express from "express";
-import { createServer } from "http";
-import { Server } from "socket.io";
 import path from "path";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import { fileURLToPath } from "url";
-import { testSupabaseConnection } from "./src/server/config/supabase.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const httpServer = createServer(app);
   
   // Middleware
   app.use(cors());
   app.use(express.json());
 
-  // Socket.io Setup
-  const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-      methods: ["GET", "POST"]
-    },
-    transports: ["websocket", "polling"]
-  });
-
-  io.on("connection", (socket) => {
-    console.log(`🔌 Yeni bağlantı: ${socket.id} (Transport: ${socket.conn.transport.name})`);
-  });
-
   const PORT = 3000;
-
-  // Veritabanı bağlantısını test et
-  await testSupabaseConnection();
-
-  // Sockets initialization from modular location
-  const { setupGameSockets } = await import("./src/server/sockets/gameSocket.ts");
-  setupGameSockets(io);
 
   // API Routes
   app.get("/api/health", (req, res) => {
@@ -60,9 +36,9 @@ async function startServer() {
     });
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 Sunucu çalışıyor: http://localhost:${PORT}`);
-    console.log(`🎮 Oyun Platformu hazır!`);
+    console.log(`🎮 Oyun Platformu (Firebase Mode) hazır!`);
   });
 }
 

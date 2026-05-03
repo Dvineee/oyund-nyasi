@@ -1,4 +1,25 @@
-import { io, Socket } from "socket.io-client";
+import { auth, db } from "../lib/firebase";
+import { 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from "firebase/auth";
+import { 
+  collection, 
+  query, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  serverTimestamp, 
+  orderBy,
+  where,
+  deleteDoc,
+  getDocs,
+  limit,
+  setDoc,
+  arrayUnion,
+  arrayRemove
+} from "firebase/firestore";
 
 /**
  * Procedural Sound Management (Web Audio API)
@@ -47,48 +68,35 @@ class SoundManager {
 }
 
 const sounds = new SoundManager();
-const socket: Socket = io({
-  transports: ["polling", "websocket"],
-  reconnectionAttempts: 10,
-  reconnectionDelay: 2000,
-  timeout: 20000
-});
-
-// Debug
-(window as any).debugSocket = socket;
 
 // State
 let myId = "";
-let currentRoom: any = null;
+let myNickname = "";
+let currentRoomId: string | null = null;
+let currentRoomData: any = null;
+let unsubscribeRoom: (() => void) | null = null;
+let unsubscribeChat: (() => void) | null = null;
 
-console.log("🔌 Socket bağlanmaya çalışıyor...");
-console.log("🌍 Origin:", window.location.origin);
-if (window.location.hostname.includes("vercel.app")) {
-  console.warn("⚠️ Vercel üzerinde çalışıyorsunuz. Eğer backend AIS üzerindeyse, socket ayarlarını güncellemeniz gerekebilir.");
-}
-socket.on("connect", () => {
-  console.log("✅ Sunucuya bağlanıldı. ID:", socket.id);
-  joinBtn.innerHTML = "PLATFORMA KATIL";
-  (joinBtn as HTMLButtonElement).disabled = false;
-  joinBtn.classList.remove("cursor-wait", "opacity-70");
-});
+console.log("🔥 Firebase başlatılıyor...");
 
-socket.on("connect_error", (error) => {
-  console.error("❌ Bağlantı hatası:", error.message);
-  console.error("Detay:", error);
-  joinBtn.innerHTML = "BAĞLANTI HATASI";
-  (joinBtn as HTMLButtonElement).disabled = true;
-});
-
-socket.on("reconnect_attempt", (attempt) => {
-  console.log(`🔄 Yeniden bağlanma denemesi: ${attempt}`);
-  joinBtn.innerHTML = `BAĞLANIYOR (${attempt})...`;
-});
-
-socket.on("disconnect", () => {
-  console.warn("🔌 Bağlantı kesildi.");
-  joinBtn.innerHTML = "BAĞLANTI KESİLDİ";
-  (joinBtn as HTMLButtonElement).disabled = true;
+// Auth Listener
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    console.log("✅ Firebase Auth Başarılı. UID:", user.uid);
+    myId = user.uid;
+    joinBtn.innerHTML = "PLATFORMA KATIL";
+    (joinBtn as HTMLButtonElement).disabled = false;
+    joinBtn.classList.remove("cursor-wait", "opacity-70");
+    
+    // Listen for rooms
+    setupRoomListListener();
+  } else {
+    console.log("🔄 Anonim giriş yapılıyor...");
+    signInAnonymously(auth).catch(err => {
+       console.error("❌ Auth hatası:", err);
+       joinBtn.innerHTML = "BAĞLANTI HATASI";
+    });
+  }
 });
 
 // DOM Elements
@@ -116,20 +124,15 @@ const gameContainer = document.getElementById("game-container")!;
 // --- Actions ---
 
 joinBtn.onclick = () => {
-  if (!socket.connected) {
-    console.warn("⚠️ Sunucuya henüz bağlanılmadı!");
-    alert("Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.");
-    return;
-  }
   const nick = nicknameInput.value.trim();
-  console.log("🖱️ Katıl butonu tıklandı. Nickname:", nick);
   if (nick) {
-    console.log("📤 join_platform gönderiliyor:", nick);
-    socket.emit("join_platform", nick);
+    myNickname = nick;
     userInfo.innerText = nick;
+    loginScreen.classList.add("hidden");
+    lobbyScreen.classList.remove("hidden");
+    lobbyScreen.classList.add("animate-fade");
+    document.getElementById("user-info-container")?.classList.remove("hidden");
     sounds.playSuccess();
-  } else {
-    console.warn("⚠️ Boş takma ad girildi!");
   }
 };
 
@@ -139,160 +142,237 @@ createRoomBtn.onclick = () => {
   sounds.playClick();
 };
 
-quickMatchBtn.onclick = () => {
-  socket.emit("quick_match");
-  sounds.playClick();
-};
-
 cancelCreateBtn.onclick = () => {
   createRoomModal.classList.add("hidden");
   createRoomModal.classList.remove("flex");
 };
 
-confirmCreateBtn.onclick = () => {
+(confirmCreateBtn as any).async_onclick = async () => {
   const name = roomNameInput.value.trim();
   const gameType = gameTypeSelect.value;
-  if (name) {
-    socket.emit("create_room", { name, gameType });
-    createRoomModal.classList.add("hidden");
-    createRoomModal.classList.remove("flex");
-    sounds.playSuccess();
+  if (name && myId) {
+    sounds.playClick();
+    try {
+      const roomRef = await addDoc(collection(db, "rooms"), {
+        name,
+        gameType,
+        hostId: myId,
+        players: [myId],
+        playerNicks: { [myId]: myNickname },
+        status: "waiting",
+        state: gameType === "tictactoe" ? { board: Array(9).fill(null), turn: myId } : { round: 1, scores: {}, moves: {} },
+        createdAt: serverTimestamp()
+      });
+      console.log("Room Created:", roomRef.id);
+      createRoomModal.classList.add("hidden");
+      createRoomModal.classList.remove("flex");
+      joinRoom(roomRef.id);
+    } catch (e) {
+      console.error("Room Create Error:", e);
+    }
   }
+};
+// Re-bind with async support
+confirmCreateBtn.onclick = () => (confirmCreateBtn as any).async_onclick();
+
+quickMatchBtn.onclick = async () => {
+  const roomsRef = collection(db, "rooms");
+  const q = query(roomsRef, where("status", "==", "waiting"), limit(1));
+  const querySnapshot = await getDocs(q);
+  
+  if (!querySnapshot.empty) {
+    const room = querySnapshot.docs[0];
+    joinRoom(room.id);
+  } else {
+    // No waiting room, create one with random name
+    roomNameInput.value = `Hızlı Maç #${Math.floor(Math.random()*900)+100}`;
+    (confirmCreateBtn as any).async_onclick();
+  }
+  sounds.playClick();
 };
 
 sendChatBtn.onclick = sendMessage;
 chatInput.onkeypress = (e) => { if (e.key === "Enter") sendMessage(); };
 
-function sendMessage() {
+async function sendMessage() {
   const msg = chatInput.value.trim();
-  if (msg) {
-    socket.emit("send_message", { message: msg });
+  if (msg && currentRoomId) {
+    await addDoc(collection(db, "rooms", currentRoomId, "messages"), {
+      senderId: myId,
+      senderName: myNickname,
+      message: msg,
+      timestamp: serverTimestamp()
+    });
     chatInput.value = "";
   }
 }
 
-leaveRoomBtn.onclick = () => {
-  socket.emit("leave_room");
+leaveRoomBtn.onclick = async () => {
+  if (currentRoomId) {
+    const roomRef = doc(db, "rooms", currentRoomId);
+    
+    if (currentRoomData.players.length === 1) {
+      await deleteDoc(roomRef);
+    } else {
+      await updateDoc(roomRef, {
+        players: arrayRemove(myId),
+        status: "waiting"
+      });
+    }
+  }
+  
+  exitRoomUI();
+};
+
+function exitRoomUI() {
+  if (unsubscribeRoom) unsubscribeRoom();
+  if (unsubscribeChat) unsubscribeChat();
   roomScreen.classList.add("hidden");
   lobbyScreen.classList.remove("hidden");
-  currentRoom = null;
+  currentRoomId = null;
+  currentRoomData = null;
   gameContainer.innerHTML = "";
   chatMessages.innerHTML = "";
   sounds.playClick();
-};
+}
 
-// --- Socket Events ---
+// --- Firebase Events ---
 
-socket.on("platform_joined", (id: string) => {
-  console.log("📥 platform_joined alındı. My ID:", id);
-  myId = id;
-  loginScreen.classList.add("hidden");
-  lobbyScreen.classList.remove("hidden");
-  lobbyScreen.classList.add("animate-fade");
-  document.getElementById("user-info-container")?.classList.remove("hidden");
-});
+function setupRoomListListener() {
+  const q = query(collection(db, "rooms"), orderBy("createdAt", "desc"));
+  onSnapshot(q, (snapshot) => {
+    roomListContainer.innerHTML = "";
+    if (snapshot.empty) {
+      roomListContainer.innerHTML = `<div class="col-span-full text-center p-12 text-gray-500 italic">Henüz aktif oda yok. Bir tane oluşturmaya ne dersin?</div>`;
+      return;
+    }
+    
+    snapshot.forEach((roomDoc) => {
+      const room = roomDoc.data();
+      const roomId = roomDoc.id;
+      const playerCount = room.players?.length || 0;
+      const maxPlayers = 2;
 
-socket.on("room_list", (roomsData: any[]) => {
-  roomListContainer.innerHTML = "";
-  if (roomsData.length === 0) {
-    roomListContainer.innerHTML = `<div class="col-span-full text-center p-12 text-gray-500 italic">Henüz aktif oda yok. Bir tane oluşturmaya ne dersin?</div>`;
-  }
-  roomsData.forEach(room => {
-    const div = document.createElement("div");
-    div.className = "panel neon-border p-5 flex justify-between items-center group cursor-pointer animate-fade";
-    div.innerHTML = `
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-accent/10 transition-colors">
-          <span class="text-2xl">${room.gameType === 'tictactoe' ? '❌' : '🎮'}</span>
-        </div>
-        <div>
-          <h4 class="font-black text-sm text-white uppercase tracking-tighter group-hover:text-accent transition-colors">${room.name}</h4>
-          <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest">${room.gameType}</p>
-        </div>
-      </div>
-      <div class="flex items-center gap-6">
-        <div class="text-right">
-          <div class="flex items-center gap-1.5 justify-end">
-            <span class="w-2 h-2 rounded-full ${room.status === 'waiting' ? 'bg-success animate-pulse shadow-[0_0_10px_#00ff88]' : 'bg-gray-600'}"></span>
-            <span class="text-xs font-black font-mono">${room.playerCount}/${room.maxPlayers}</span>
+      const div = document.createElement("div");
+      div.className = "panel neon-border p-5 flex justify-between items-center group cursor-pointer animate-fade";
+      div.innerHTML = `
+        <div class="flex items-center gap-4">
+          <div class="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-accent/10 transition-colors">
+            <span class="text-2xl">${room.gameType === 'tictactoe' ? '❌' : '🎮'}</span>
           </div>
-          <span class="text-[9px] text-gray-600 uppercase font-black tracking-widest">${room.status === 'waiting' ? 'Waiting' : 'Live'}</span>
+          <div>
+            <h4 class="font-black text-sm text-white uppercase tracking-tighter group-hover:text-accent transition-colors">${room.name}</h4>
+            <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest">${room.gameType}</p>
+          </div>
         </div>
-        <button class="btn-primary py-2 px-4 !text-[9px]">
-          ${room.playerCount >= room.maxPlayers ? 'FULL' : 'JOIN'}
-        </button>
-      </div>
-    `;
-    div.onclick = () => {
-      if (room.playerCount < room.maxPlayers) {
-        socket.emit("join_room", room.id);
-        sounds.playClick();
-      }
-    };
-    roomListContainer.appendChild(div);
+        <div class="flex items-center gap-6">
+          <div class="text-right">
+            <div class="flex items-center gap-1.5 justify-end">
+              <span class="w-2 h-2 rounded-full ${room.status === 'waiting' ? 'bg-success animate-pulse shadow-[0_0_10px_#00ff88]' : 'bg-gray-600'}"></span>
+              <span class="text-xs font-black font-mono">${playerCount}/${maxPlayers}</span>
+            </div>
+            <span class="text-[9px] text-gray-600 uppercase font-black tracking-widest">${room.status === 'waiting' ? 'Waiting' : 'Live'}</span>
+          </div>
+          <button class="btn-primary py-2 px-4 !text-[9px]">
+            ${playerCount >= maxPlayers ? 'FULL' : 'JOIN'}
+          </button>
+        </div>
+      `;
+      div.onclick = () => {
+        if (playerCount < maxPlayers) {
+          joinRoom(roomId);
+          sounds.playClick();
+        }
+      };
+      roomListContainer.appendChild(div);
+    });
   });
-});
+}
 
-socket.on("room_created", (room: any) => renderRoom(room));
-socket.on("game_started", (room: any) => { renderRoom(room); sounds.playNotify(); });
-socket.on("player_joined", (room: any) => { renderRoom(room); sounds.playNotify(); });
-socket.on("player_left", (room: any) => renderRoom(room));
+async function joinRoom(roomId: string) {
+  currentRoomId = roomId;
+  const roomRef = doc(db, "rooms", roomId);
+  const snap = await doc(db, "rooms", roomId); // dummy to get ref
 
-socket.on("new_message", (data: any) => {
-  const div = document.createElement("div");
-  if (data.isSystem) {
-    div.className = "text-[11px] text-center text-gray-600 font-mono uppercase tracking-tighter py-2 animate-fade";
-    div.innerHTML = `<span>[${data.text}]</span>`;
-  } else {
-    const isMe = data.sender === userInfo.innerText;
-    div.className = `flex ${isMe ? 'justify-end' : 'justify-start'} animate-fade mb-2`;
-    div.innerHTML = `
-      <div class="chat-bubble ${isMe ? 'bg-accent/20 border border-accent/30 text-accent' : 'bg-neutral-800 text-gray-300'}">
-        <div class="flex justify-between items-center gap-4 mb-0.5">
-          <span class="font-black text-[10px] uppercase tracking-widest ${isMe ? 'text-accent' : 'text-gray-500'}">${data.sender}</span>
-          <span class="text-[9px] opacity-40">${data.timestamp}</span>
-        </div>
-        <span class="text-[13px] leading-relaxed">${data.text}</span>
-      </div>
-    `;
-    if (!isMe) sounds.playNotify();
-  }
-  chatMessages.appendChild(div);
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-});
+  // Sync Room Data
+  unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
+    if (!docSnap.exists()) {
+      exitRoomUI();
+      return;
+    }
+    const data = docSnap.data();
+    currentRoomData = data;
+    
+    // Auto-update attendance if not in list
+    if (!data.players.includes(myId) && data.players.length < 2) {
+        updateDoc(roomRef, {
+            players: arrayUnion(myId),
+            [`playerNicks.${myId}`]: myNickname,
+            status: data.players.length + 1 >= 2 ? "playing" : "waiting"
+        });
+    }
 
-function renderRoom(room: any) {
-  currentRoom = room;
+    renderRoom(data);
+  });
+
+  // Sync Chat
+  const chatQ = query(collection(db, "rooms", roomId, "messages"), orderBy("timestamp", "asc"));
+  chatMessages.innerHTML = "";
+  unsubscribeChat = onSnapshot(chatQ, (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === "added") {
+        const data = change.doc.data();
+        const div = document.createElement("div");
+        const isMe = data.senderId === myId;
+        div.className = `flex ${isMe ? 'justify-end' : 'justify-start'} animate-fade mb-2`;
+        div.innerHTML = `
+          <div class="chat-bubble ${isMe ? 'bg-accent/20 border border-accent/30 text-accent' : 'bg-neutral-800 text-gray-300'}">
+            <div class="flex justify-between items-center gap-4 mb-0.5">
+              <span class="font-black text-[10px] uppercase tracking-widest ${isMe ? 'text-accent' : 'text-gray-500'}">${data.senderName}</span>
+              <span class="text-[9px] opacity-40">${data.timestamp?.toDate().toLocaleTimeString() || "..."}</span>
+            </div>
+            <span class="text-[13px] leading-relaxed">${data.message}</span>
+          </div>
+        `;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (!isMe) sounds.playNotify();
+      }
+    });
+  });
+
   lobbyScreen.classList.add("hidden");
   roomScreen.classList.remove("hidden");
+}
+
+function renderRoom(room: any) {
   roomScreen.classList.add("animate-fade");
   
   const controls = document.getElementById("game-over-controls");
   if (controls) controls.remove();
-  const inviteDiv = document.querySelector(".rematch-invite");
-  if (inviteDiv) inviteDiv.remove();
 
   playerList.innerHTML = "";
-  room.players.forEach((p: any) => {
+  room.players.forEach((pid: string) => {
+    const nick = room.playerNicks?.[pid] || "Oyuncu";
     const li = document.createElement("li");
     li.className = "panel p-3 flex items-center justify-between mb-2 group";
     li.innerHTML = `
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center font-bold text-xs text-accent">
-          ${p.nickname.charAt(0).toUpperCase()}
+          ${nick.charAt(0).toUpperCase()}
         </div>
-        <span class="text-sm font-bold text-white">${p.nickname}</span>
+        <span class="text-sm font-bold text-white">${nick}</span>
       </div>
-      ${p.id === room.hostId ? '<span class="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded border border-accent/20 font-bold uppercase">Host</span>' : ''}
+      ${pid === room.hostId ? '<span class="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded border border-accent/20 font-bold uppercase">Host</span>' : ''}
     `;
     playerList.appendChild(li);
   });
 
-  if (room.players.length === room.maxPlayers) {
+  if (room.players.length >= 2) {
     if (room.gameType === "tictactoe") {
-      initTicTacToe(room);
+      renderTicTacToe(room);
     } else if (room.gameType === "rps") {
-      initRPS(room);
+      renderRPS(room);
     }
   } else {
     gameContainer.innerHTML = `
@@ -306,7 +386,7 @@ function renderRoom(room: any) {
   }
 }
 
-function initTicTacToe(room: any) {
+function renderTicTacToe(room: any) {
   const board = room.state?.board || Array(9).fill(null);
   gameContainer.innerHTML = `
     <div class="flex flex-col items-center">
@@ -318,124 +398,101 @@ function initTicTacToe(room: any) {
           }).join('')}
        </div>
        <div id="game-status" class="mt-12 text-center text-sm font-mono font-black uppercase tracking-[0.2em] transition-all">
-          ${room.state?.turn === myId ? '<span class="text-success animate-neon">Sizin Sıranız</span>' : '<span class="text-gray-600">Rakip Sırası</span>'}
+          ${room.winner ? `<span class="text-success text-2xl">${room.playerNicks[room.winner] || 'Birisi'} Kazandı!</span>` : 
+            (room.state?.turn === myId ? '<span class="text-success animate-neon">Sizin Sıranız</span>' : '<span class="text-gray-600">Rakip Sırası</span>')}
        </div>
     </div>
   `;
 
+  if (room.winner) {
+      renderGameOver(room);
+      return;
+  }
+
   document.querySelectorAll(".cell").forEach(cell => {
-    (cell as HTMLElement).onclick = () => {
-       const index = (cell as HTMLElement).dataset.index;
-       socket.emit("make_move", { index: Number(index) });
-       sounds.playClick();
+    (cell as HTMLElement).onclick = async () => {
+       if (room.state.turn !== myId) return;
+       const index = Number((cell as HTMLElement).dataset.index);
+       if (board[index]) return;
+
+       const mark = myId === room.hostId ? "X" : "O";
+       const newBoard = [...board];
+       newBoard[index] = mark;
+
+       const winner = checkTicTacToeWinner(newBoard);
+       const nextTurn = room.players.find((p: string) => p !== myId);
+
+       await updateDoc(doc(db, "rooms", currentRoomId!), {
+         "state.board": newBoard,
+         "state.turn": nextTurn,
+         "winner": winner || null,
+         "status": winner ? "finished" : "playing"
+       });
+       sounds.playMove();
     };
   });
 }
 
-socket.on("move_made", (data: any) => {
-  const cell = document.querySelector(`[data-index="${data.index}"]`);
-  if (cell) {
-    const mark = data.playerId === currentRoom.hostId ? "X" : "O";
-    cell.innerHTML = mark;
-    cell.className = `cell ${mark === 'X' ? 'mark-x' : 'mark-o'} animate-fade`;
-    sounds.playMove();
+function checkTicTacToeWinner(board: any[]) {
+  const lines = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6]
+  ];
+  for (let line of lines) {
+    const [a, b, c] = line;
+    if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+      return currentRoomData.players[board[a] === "X" ? 0 : 1];
+    }
   }
-  
-  const status = document.getElementById("game-status")!;
-  if (data.nextTurn === myId) {
-    status.innerHTML = '<span class="text-success animate-neon">Sizin Sıranız</span>';
-    sounds.playNotify();
-  } else {
-    status.innerHTML = '<span class="text-gray-600">Rakip Sırası</span>';
-  }
-});
+  return null;
+}
 
-socket.on("game_over", (data: any) => {
-  const status = document.getElementById("game-status")!;
-  const isMeWinner = data.winner === userInfo.innerText;
+function renderGameOver(room: any) {
+    const status = document.getElementById("game-status")!;
+    const isMeWinner = room.winner === myId;
 
-  if (data.draw) {
-    status.innerHTML = '<span class="text-yellow-500">Berabere!</span>';
-    sounds.playNotify();
-  } else if (data.forfeit) {
-    status.innerHTML = `<span class="text-success font-black text-2xl tracking-tighter">HÜKMEN GALİP!</span><br><span class="text-[10px] text-gray-500">Rakip oyundan ayrıldı</span>`;
-    sounds.playSuccess();
-  } else {
-    status.innerHTML = `<span class="${isMeWinner ? 'text-success' : 'text-red-500'} font-black text-2xl tracking-tighter">${isMeWinner ? 'ZAFER!' : 'YENİLGİ!'}</span>`;
-    isMeWinner ? sounds.playSuccess() : sounds.playError();
-  }
-  
-  const controls = document.createElement("div");
-  controls.className = "mt-8 flex gap-3 justify-center animate-fade";
-  controls.id = "game-over-controls";
+    const controls = document.createElement("div");
+    controls.className = "mt-8 flex gap-3 justify-center animate-fade";
+    controls.id = "game-over-controls";
 
-  const retryBtn = document.createElement("button");
-  retryBtn.innerText = "TEKRAR OYNA";
-  retryBtn.className = "btn-primary py-2 px-6 text-xs";
-  retryBtn.onclick = () => {
-    retryBtn.disabled = true;
-    retryBtn.innerText = "BEKLENİYOR...";
-    socket.emit("request_rematch");
-    sounds.playClick();
-  };
+    const retryBtn = document.createElement("button");
+    retryBtn.innerText = "TEKRAR OYNA";
+    retryBtn.className = "btn-primary py-2 px-6 text-xs";
+    retryBtn.onclick = async () => {
+        await updateDoc(doc(db, "rooms", currentRoomId!), {
+            status: "playing",
+            winner: null,
+            state: room.gameType === "tictactoe" ? { board: Array(9).fill(null), turn: room.hostId } : { round: 1, scores: {}, moves: {} }
+        });
+        sounds.playClick();
+    };
 
-  const lobiBtn = document.createElement("button");
-  lobiBtn.innerText = "LOBİYE DÖN";
-  lobiBtn.className = "btn-secondary py-2 px-6 text-xs";
-  lobiBtn.onclick = () => {
-    socket.emit("leave_room");
-    roomScreen.classList.add("hidden");
-    lobbyScreen.classList.remove("hidden");
-    sounds.playClick();
-  };
+    const lobiBtn = document.createElement("button");
+    lobiBtn.innerText = "LOBİYE DÖN";
+    lobiBtn.className = "btn-secondary py-2 px-6 text-xs";
+    lobiBtn.onclick = () => {
+        exitRoomUI();
+    };
 
-  controls.appendChild(retryBtn);
-  controls.appendChild(lobiBtn);
-  status.parentNode?.appendChild(controls);
-});
+    controls.appendChild(retryBtn);
+    controls.appendChild(lobiBtn);
+    status.parentNode?.appendChild(controls);
+}
 
-socket.on("rematch_offered", (data: any) => {
-  sounds.playNotify();
-  const status = document.getElementById("game-status")!;
-  const existingControls = document.getElementById("game-over-controls");
-  if (existingControls) existingControls.remove();
-
-  const inviteDiv = document.createElement("div");
-  inviteDiv.className = "rematch-invite mt-6 p-6 panel animate-fade text-center";
-  inviteDiv.innerHTML = `
-    <p class="font-bold mb-4 text-sm uppercase tracking-widest text-white">${data.sender} rövanş istiyor!</p>
-    <div class="flex gap-3 justify-center">
-      <button id="accept-rematch-btn" class="btn-primary py-2 px-6 text-xs">KABUL ET</button>
-      <button id="decline-rematch-btn" class="btn-secondary py-2 px-6 text-xs">REDDET</button>
-    </div>
-  `;
-  status.parentNode?.appendChild(inviteDiv);
-
-  document.getElementById("accept-rematch-btn")!.onclick = () => {
-    socket.emit("accept_rematch");
-    inviteDiv.remove();
-    sounds.playSuccess();
-  };
-  document.getElementById("decline-rematch-btn")!.onclick = () => {
-    inviteDiv.remove();
-    status.innerHTML = '<span class="text-gray-600 font-bold">Rövanş Reddedildi</span>';
-    sounds.playClick();
-  };
-});
-
-function initRPS(room: any) {
-  const state = room.state || { scores: {}, round: 1 };
+function renderRPS(room: any) {
+  const state = room.state || { scores: {}, round: 1, moves: {} };
   const moves = ["rock", "paper", "scissors"];
   const moveIcons: any = { rock: "✊", paper: "✋", scissors: "✌️" };
 
   gameContainer.innerHTML = `
     <div class="flex flex-col items-center space-y-12">
       <div class="flex justify-between w-full max-w-md px-4">
-        ${room.players.map((p: any) => `
+        ${room.players.map((pid: string) => `
           <div class="flex flex-col items-center">
-            <div id="ready-${p.id}" class="w-2 h-2 rounded-full mb-2 bg-gray-700"></div>
-            <span class="text-[10px] font-mono uppercase tracking-widest text-gray-500">${p.nickname}</span>
-            <span id="score-${p.id}" class="text-3xl font-black text-white">${state.scores[p.id] || 0}</span>
+            <div id="ready-${pid}" class="w-2 h-2 rounded-full mb-2 ${state.moves?.[pid] ? 'bg-success animate-pulse' : 'bg-gray-700'}"></div>
+            <span class="text-[10px] font-mono uppercase tracking-widest text-gray-500">${room.playerNicks[pid] || '...'}</span>
+            <span id="score-${pid}" class="text-3xl font-black text-white">${state.scores?.[pid] || 0}</span>
           </div>
         `).join('<div class="h-10 w-px bg-white/5 my-auto"></div>')}
       </div>
@@ -446,7 +503,7 @@ function initRPS(room: any) {
 
       <div class="flex gap-4">
         ${moves.map(m => `
-          <button data-move="${m}" class="rps-btn w-20 h-20 panel neon-border flex items-center justify-center text-3xl hover:scale-110 active:scale-90 transition-all">
+          <button data-move="${m}" class="rps-btn w-20 h-20 panel neon-border flex items-center justify-center text-3xl hover:scale-110 active:scale-90 transition-all ${state.moves?.[myId] ? 'opacity-50 pointer-events-none' : ''}">
             ${moveIcons[m]}
           </button>
         `).join('')}
@@ -459,78 +516,42 @@ function initRPS(room: any) {
   `;
 
   document.querySelectorAll(".rps-btn").forEach(btn => {
-    (btn as HTMLElement).onclick = () => {
+    (btn as HTMLElement).onclick = async () => {
       const move = (btn as HTMLElement).dataset.move;
-      socket.emit("make_move", { move });
-      btn.classList.add("bg-accent/20", "border-accent", "shadow-[0_0_20px_var(--color-accent-glow)]");
-      document.querySelectorAll(".rps-btn").forEach(b => { if(b !== btn) b.classList.add("opacity-50", "pointer-events-none") });
-      sounds.playClick();
+      const newMoves = { ...state.moves, [myId]: move };
+      
+      if (Object.keys(newMoves).length === 2) {
+          // Resolve Round
+          const p1 = room.players[0];
+          const p2 = room.players[1];
+          const m1 = newMoves[p1];
+          const m2 = newMoves[p2];
+          
+          let winnerId = null;
+          if (m1 !== m2) {
+              if ((m1 === "rock" && m2 === "scissors") || (m1 === "paper" && m2 === "rock") || (m1 === "scissors" && m2 === "paper")) {
+                  winnerId = p1;
+              } else {
+                  winnerId = p2;
+              }
+          }
+          
+          const newScores = { ...state.scores };
+          if (winnerId) newScores[winnerId] = (newScores[winnerId] || 0) + 1;
+          
+          await updateDoc(doc(db, "rooms", currentRoomId!), {
+              "state.moves": {},
+              "state.scores": newScores,
+              "state.round": state.round + 1,
+              "state.lastResult": { moves: newMoves, winnerId }
+          });
+          sounds.playSuccess();
+      } else {
+          await updateDoc(doc(db, "rooms", currentRoomId!), {
+              [`state.moves.${myId}`]: move
+          });
+          sounds.playClick();
+      }
     };
   });
 }
-
-socket.on("player_ready", (data: { playerId: string }) => {
-  const indicator = document.getElementById(`ready-${data.playerId}`);
-  if (indicator) {
-    indicator.classList.remove("bg-gray-700");
-    indicator.classList.add("bg-success", "shadow-[0_0_8px_#00ff88]", "animate-pulse");
-    if (data.playerId !== myId) sounds.playNotify();
-  }
-});
-
-socket.on("round_resolved", (data: any) => {
-  const resultArea = document.getElementById("rps-result-area")!;
-  const icons: any = { rock: "✊", paper: "✋", scissors: "✌️" };
-  const p1Id = Object.keys(data.moves)[0];
-  const p2Id = Object.keys(data.moves)[1];
-
-  resultArea.innerHTML = `
-    <div class="flex flex-col items-center gap-2">
-      <span class="animate-fade">${icons[data.moves[p1Id]]}</span>
-      <span class="text-[8px] text-gray-600">P1</span>
-    </div>
-    <div class="text-accent text-lg font-black italic">VS</div>
-    <div class="flex flex-col items-center gap-2">
-      <span class="animate-fade">${icons[data.moves[p2Id]]}</span>
-      <span class="text-[8px] text-gray-600">P2</span>
-    </div>
-  `;
-
-  // Skorları güncelle
-  Object.keys(data.scores).forEach(pid => {
-    const scoreVal = document.getElementById(`score-${pid}`);
-    if (scoreVal) scoreVal.innerText = data.scores[pid];
-  });
-
-  // Kazanan animasyonu
-  if (data.winnerId) {
-    sounds.playSuccess();
-    const winnerScore = document.getElementById(`score-${data.winnerId}`);
-    winnerScore?.classList.add("text-success", "animate-bounce");
-    setTimeout(() => winnerScore?.classList.remove("text-success", "animate-bounce"), 2000);
-  } else {
-    sounds.playNotify();
-  }
-
-  // 2 saniye sonra yeni tur hazırlığı
-  setTimeout(() => {
-    const moveButtons = document.querySelectorAll(".rps-btn");
-    moveButtons.forEach(b => b.classList.remove("bg-accent/20", "border-accent", "shadow-[0_0_20px_var(--color-accent-glow)]", "opacity-50", "pointer-events-none"));
-    
-    const indicators = document.querySelectorAll("[id^='ready-']");
-    indicators.forEach(ind => {
-      ind.classList.remove("bg-success", "shadow-[0_0_8px_#00ff88]", "animate-pulse");
-      ind.classList.add("bg-gray-700");
-    });
-
-    const status = document.getElementById("game-status");
-    if (status) status.innerText = `TUR ${data.round + 1}`;
-    
-    resultArea.innerHTML = `<span class="text-gray-800 italic text-sm font-mono">SEÇİMİNİ YAP</span>`;
-  }, 2000);
-});
-
-socket.on("error", (data: any) => {
-  sounds.playError();
-  console.error("Game Error:", data.message);
-});

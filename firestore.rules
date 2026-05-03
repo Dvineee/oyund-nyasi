@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Rooms
+    match /rooms/{roomId} {
+      allow read: if isSignedIn();
+      
+      allow create: if isSignedIn() 
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.players.size() == 1
+        && request.resource.data.players[0] == request.auth.uid;
+
+      allow update: if isSignedIn() && (
+        // JOIN
+        (
+          resource.data.status == 'waiting' 
+          && resource.data.players.size() < 2
+          && request.resource.data.players.size() == resource.data.players.size() + 1
+          && request.resource.data.players[resource.data.players.size()] == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'status'])
+        )
+        ||
+        // MOVE
+        (
+          request.auth.uid in resource.data.players
+          && request.resource.data.diff(resource.data).affectedKeys().hasAny(['state', 'turn', 'winner', 'status'])
+          && (resource.data.turn == request.auth.uid || resource.data.status == 'playing')
+        )
+      );
+
+      allow delete: if isSignedIn() && resource.data.hostId == request.auth.uid;
+
+      // Messages
+      match /messages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() 
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.roomId == roomId;
+      }
+    }
+  }
+}
