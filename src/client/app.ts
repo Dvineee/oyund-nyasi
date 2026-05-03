@@ -47,22 +47,31 @@ class SoundManager {
 }
 
 const sounds = new SoundManager();
-const socket: Socket = io({
-  transports: ["websocket"],
-  upgrade: false
-});
+const socket: Socket = io();
 
 // State
 let myId = "";
 let currentRoom: any = null;
 
 console.log("🔌 Socket bağlanmaya çalışıyor...");
+console.log("🌍 Origin:", window.location.origin);
 socket.on("connect", () => {
   console.log("✅ Sunucuya bağlanıldı. ID:", socket.id);
+  joinBtn.innerHTML = "PLATFORMA KATIL";
+  (joinBtn as HTMLButtonElement).disabled = false;
+  joinBtn.classList.remove("cursor-wait", "opacity-70");
 });
 
 socket.on("connect_error", (error) => {
   console.error("❌ Bağlantı hatası:", error);
+  joinBtn.innerHTML = "BAĞLANTI HATASI";
+  (joinBtn as HTMLButtonElement).disabled = true;
+});
+
+socket.on("disconnect", () => {
+  console.warn("🔌 Bağlantı kesildi.");
+  joinBtn.innerHTML = "BAĞLANTI KESİLDİ";
+  (joinBtn as HTMLButtonElement).disabled = true;
 });
 
 // DOM Elements
@@ -90,6 +99,11 @@ const gameContainer = document.getElementById("game-container")!;
 // --- Actions ---
 
 joinBtn.onclick = () => {
+  if (!socket.connected) {
+    console.warn("⚠️ Sunucuya henüz bağlanılmadı!");
+    alert("Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin.");
+    return;
+  }
   const nick = nicknameInput.value.trim();
   console.log("🖱️ Katıl butonu tıklandı. Nickname:", nick);
   if (nick) {
