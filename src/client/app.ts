@@ -1,5 +1,47 @@
 import { io, Socket } from "socket.io-client";
 
+/**
+ * Procedural Sound Management (Web Audio API)
+ */
+class SoundManager {
+  private ctx: AudioContext | null = null;
+  private enabled: boolean = true;
+
+  private initCtx() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+  }
+
+  playTone(freq: number, type: OscillatorType, duration: number, volume: number = 0.1) {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (this.ctx!.state === 'suspended') this.ctx!.resume();
+    
+    const osc = this.ctx!.createOscillator();
+    const gain = this.ctx!.createGain();
+    
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, this.ctx!.currentTime);
+    
+    gain.gain.setValueAtTime(volume, this.ctx!.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx!.currentTime + duration);
+    
+    osc.connect(gain);
+    gain.connect(this.ctx!.destination);
+    
+    osc.start();
+    osc.stop(this.ctx!.currentTime + duration);
+  }
+
+  playClick() { this.playTone(800, "sine", 0.1, 0.05); }
+  playNotify() { this.playTone(1200, "sine", 0.2, 0.05); }
+  playSuccess() { this.playTone(600, "sine", 0.1); setTimeout(() => this.playTone(900, "sine", 0.3), 100); }
+  playError() { this.playTone(200, "square", 0.2, 0.05); }
+  playMove() { this.playTone(400, "triangle", 0.1, 0.08); }
+}
+
+const sounds = new SoundManager();
 const socket: Socket = io();
 
 // State
@@ -15,6 +57,7 @@ const joinBtn = document.getElementById("join-btn")!;
 const userInfo = document.getElementById("user-info")!;
 const roomListContainer = document.getElementById("room-list")!;
 const createRoomBtn = document.getElementById("create-room-btn")!;
+const quickMatchBtn = document.getElementById("quick-match-btn")!;
 const createRoomModal = document.getElementById("create-room-modal")!;
 const confirmCreateBtn = document.getElementById("confirm-create-btn")!;
 const cancelCreateBtn = document.getElementById("cancel-create-btn")!;
@@ -34,11 +77,25 @@ joinBtn.onclick = () => {
   if (nick) {
     socket.emit("join_platform", nick);
     userInfo.innerText = nick;
+    sounds.playSuccess();
   }
 };
 
-createRoomBtn.onclick = () => createRoomModal.classList.remove("hidden");
-cancelCreateBtn.onclick = () => createRoomModal.classList.add("hidden");
+createRoomBtn.onclick = () => {
+  createRoomModal.classList.remove("hidden");
+  createRoomModal.classList.add("flex");
+  sounds.playClick();
+};
+
+quickMatchBtn.onclick = () => {
+  socket.emit("quick_match");
+  sounds.playClick();
+};
+
+cancelCreateBtn.onclick = () => {
+  createRoomModal.classList.add("hidden");
+  createRoomModal.classList.remove("flex");
+};
 
 confirmCreateBtn.onclick = () => {
   const name = roomNameInput.value.trim();
@@ -46,6 +103,8 @@ confirmCreateBtn.onclick = () => {
   if (name) {
     socket.emit("create_room", { name, gameType });
     createRoomModal.classList.add("hidden");
+    createRoomModal.classList.remove("flex");
+    sounds.playSuccess();
   }
 };
 
@@ -67,6 +126,7 @@ leaveRoomBtn.onclick = () => {
   currentRoom = null;
   gameContainer.innerHTML = "";
   chatMessages.innerHTML = "";
+  sounds.playClick();
 };
 
 // --- Socket Events ---
@@ -75,46 +135,75 @@ socket.on("platform_joined", (id: string) => {
   myId = id;
   loginScreen.classList.add("hidden");
   lobbyScreen.classList.remove("hidden");
+  lobbyScreen.classList.add("animate-fade");
+  document.getElementById("user-info-container")?.classList.remove("hidden");
 });
 
-socket.on("room_list", (rooms: any[]) => {
+socket.on("room_list", (roomsData: any[]) => {
   roomListContainer.innerHTML = "";
-  rooms.forEach(room => {
+  if (roomsData.length === 0) {
+    roomListContainer.innerHTML = `<div class="col-span-full text-center p-12 text-gray-500 italic">Henüz aktif oda yok. Bir tane oluşturmaya ne dersin?</div>`;
+  }
+  roomsData.forEach(room => {
     const div = document.createElement("div");
-    div.className = "bg-gray-800 p-4 rounded-xl border border-gray-700 flex justify-between items-center hover:border-orange-500 transition cursor-pointer";
+    div.className = "panel p-5 flex justify-between items-center hover:border-accent transition group cursor-pointer animate-fade";
     div.innerHTML = `
-      <div>
-        <h4 class="font-bold text-orange-400">${room.name}</h4>
-        <p class="text-xs text-gray-400">${room.gameType === 'tictactoe' ? 'Tic Tac Toe' : room.gameType}</p>
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 bg-neutral-800 rounded-xl flex items-center justify-center group-hover:bg-accent/10 transition">
+          <span class="text-2xl">${room.gameType === 'tictactoe' ? '❌' : '🎮'}</span>
+        </div>
+        <div>
+          <h4 class="font-bold text-lg text-white group-hover:text-accent transition font-sans">${room.name}</h4>
+          <p class="text-xs font-mono text-gray-500 uppercase tracking-widest">${room.gameType}</p>
+        </div>
       </div>
-      <div class="text-right">
-        <span class="text-sm font-mono">${room.playerCount}/2</span>
-        <button class="ml-4 bg-orange-600 px-3 py-1 rounded-md text-xs font-bold ${room.playerCount >= 2 ? 'opacity-50 cursor-not-allowed' : ''}">Katıl</button>
+      <div class="flex items-center gap-6">
+        <div class="text-right">
+          <div class="flex items-center gap-1.5 justify-end">
+            <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+            <span class="text-sm font-bold font-mono">${room.playerCount}/${room.maxPlayers}</span>
+          </div>
+          <span class="text-[10px] text-gray-600 uppercase font-bold">${room.status === 'waiting' ? 'Bekliyor' : 'Oynanıyor'}</span>
+        </div>
+        <button class="bg-accent px-4 py-2 rounded-xl text-xs font-bold text-white group-hover:bg-accent-hover transition ${room.playerCount >= room.maxPlayers ? 'opacity-30 pointer-events-none' : ''}">
+          ${room.playerCount >= room.maxPlayers ? 'DOLU' : 'KATIL'}
+        </button>
       </div>
     `;
     div.onclick = () => {
-      if (room.playerCount < 2) socket.emit("join_room", room.id);
+      if (room.playerCount < room.maxPlayers) {
+        socket.emit("join_room", room.id);
+        sounds.playClick();
+      }
     };
     roomListContainer.appendChild(div);
   });
 });
 
-socket.on("room_created", (room: any) => {
-  renderRoom(room);
-});
-
-socket.on("player_joined", (room: any) => {
-  renderRoom(room);
-});
-
-socket.on("player_left", (room: any) => {
-  renderRoom(room);
-});
+socket.on("room_created", (room: any) => renderRoom(room));
+socket.on("game_started", (room: any) => { renderRoom(room); sounds.playNotify(); });
+socket.on("player_joined", (room: any) => { renderRoom(room); sounds.playNotify(); });
+socket.on("player_left", (room: any) => renderRoom(room));
 
 socket.on("new_message", (data: any) => {
   const div = document.createElement("div");
-  div.className = "bg-gray-700/50 p-2 rounded-lg";
-  div.innerHTML = `<span class="font-bold text-orange-400">${data.sender}:</span> <span class="break-words">${data.text}</span>`;
+  if (data.isSystem) {
+    div.className = "text-[11px] text-center text-gray-600 font-mono uppercase tracking-tighter py-2 animate-fade";
+    div.innerHTML = `<span>[${data.text}]</span>`;
+  } else {
+    const isMe = data.sender === userInfo.innerText;
+    div.className = `flex ${isMe ? 'justify-end' : 'justify-start'} animate-fade mb-2`;
+    div.innerHTML = `
+      <div class="chat-bubble ${isMe ? 'bg-accent/20 border border-accent/30 text-accent' : 'bg-neutral-800 text-gray-300'}">
+        <div class="flex justify-between items-center gap-4 mb-0.5">
+          <span class="font-black text-[10px] uppercase tracking-widest ${isMe ? 'text-accent' : 'text-gray-500'}">${data.sender}</span>
+          <span class="text-[9px] opacity-40">${data.timestamp}</span>
+        </div>
+        <span class="text-[13px] leading-relaxed">${data.text}</span>
+      </div>
+    `;
+    if (!isMe) sounds.playNotify();
+  }
   chatMessages.appendChild(div);
   chatMessages.scrollTop = chatMessages.scrollHeight;
 });
@@ -123,36 +212,64 @@ function renderRoom(room: any) {
   currentRoom = room;
   lobbyScreen.classList.add("hidden");
   roomScreen.classList.remove("hidden");
+  roomScreen.classList.add("animate-fade");
   
-  // Players
+  const controls = document.getElementById("game-over-controls");
+  if (controls) controls.remove();
+  const inviteDiv = document.querySelector(".rematch-invite");
+  if (inviteDiv) inviteDiv.remove();
+
   playerList.innerHTML = "";
   room.players.forEach((p: any) => {
     const li = document.createElement("li");
-    li.className = "flex items-center gap-2 text-sm";
-    li.innerHTML = `<span class="w-2 h-2 bg-green-500 rounded-full"></span> ${p.nickname} ${p.id === room.hostId ? '(Host)' : ''}`;
+    li.className = "panel p-3 flex items-center justify-between mb-2 group";
+    li.innerHTML = `
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center font-bold text-xs text-accent">
+          ${p.nickname.charAt(0).toUpperCase()}
+        </div>
+        <span class="text-sm font-bold text-white">${p.nickname}</span>
+      </div>
+      ${p.id === room.hostId ? '<span class="text-[9px] bg-accent/10 text-accent px-1.5 py-0.5 rounded border border-accent/20 font-bold uppercase">Host</span>' : ''}
+    `;
     playerList.appendChild(li);
   });
 
-  // Game Container
-  if (room.players.length === 2) {
+  if (room.players.length === room.maxPlayers) {
     initTicTacToe(room);
   } else {
-    gameContainer.innerHTML = `<p class="text-gray-400 text-center">Diğer oyuncu bekleniyor...</p>`;
+    gameContainer.innerHTML = `
+      <div class="text-center space-y-4 py-20">
+        <div class="w-20 h-20 bg-neutral-800/50 rounded-full flex items-center justify-center mx-auto border-4 border-dashed border-neutral-700 animate-spin">
+           <span class="text-3xl">⏳</span>
+        </div>
+        <p class="text-gray-500 animate-pulse font-mono uppercase tracking-widest text-sm">Diğer oyuncu bekleniyor...</p>
+      </div>
+    `;
   }
 }
 
 function initTicTacToe(room: any) {
+  const board = room.state?.board || Array(9).fill(null);
   gameContainer.innerHTML = `
-    <div class="grid grid-cols-3 gap-2 w-64 mx-auto mt-8">
-      ${[0,1,2,3,4,5,6,7,8].map(i => `<div data-index="${i}" class="cell w-20 h-20 bg-gray-700 rounded-lg flex items-center justify-center text-4xl font-bold cursor-pointer hover:bg-gray-600 transition h-[80px]"></div>`).join('')}
+    <div class="flex flex-col items-center">
+       <div class="grid grid-cols-3 gap-3 w-full max-w-[320px]">
+          ${[0,1,2,3,4,5,6,7,8].map(i => {
+            const mark = board[i] || "";
+            return `<div data-index="${i}" class="cell ${mark === 'X' ? 'text-blue-400' : 'text-red-400'}">${mark}</div>`;
+          }).join('')}
+       </div>
+       <div id="game-status" class="mt-8 text-center text-lg font-mono font-black uppercase tracking-tighter transition-all">
+          ${room.state?.turn === myId ? '<span class="text-success">Sizin Sıranız</span>' : '<span class="text-gray-500">Rakip Sırası</span>'}
+       </div>
     </div>
-    <div id="game-status" class="mt-8 text-center text-xl font-bold">Oyun Başladı!</div>
   `;
 
   document.querySelectorAll(".cell").forEach(cell => {
     cell.onclick = () => {
        const index = (cell as HTMLElement).dataset.index;
        socket.emit("make_move", { index: Number(index) });
+       sounds.playClick();
     };
   });
 }
@@ -163,44 +280,93 @@ socket.on("move_made", (data: any) => {
     const mark = data.playerId === currentRoom.hostId ? "X" : "O";
     cell.innerHTML = mark;
     cell.classList.add(mark === "X" ? "text-blue-400" : "text-red-400");
+    cell.classList.add("animate-fade");
+    sounds.playMove();
   }
   
   const status = document.getElementById("game-status")!;
   if (data.nextTurn === myId) {
-    status.innerText = "Sıra Sizde!";
-    status.className = "mt-8 text-center text-xl font-bold text-green-400";
+    status.innerHTML = '<span class="text-success">Sizin Sıranız</span>';
+    sounds.playNotify();
   } else {
-    status.innerText = "Rakip Bekleniyor...";
-    status.className = "mt-8 text-center text-xl font-bold text-gray-400";
+    status.innerHTML = '<span class="text-gray-500">Rakip Sırası</span>';
   }
 });
 
 socket.on("game_over", (data: any) => {
   const status = document.getElementById("game-status")!;
+  const isMeWinner = data.winner === userInfo.innerText;
+
   if (data.draw) {
-    status.innerText = "Berabere!";
-    status.className = "mt-8 text-center text-xl font-bold text-yellow-400";
+    status.innerHTML = '<span class="text-yellow-500">Berabere!</span>';
+    sounds.playNotify();
+  } else if (data.forfeit) {
+    status.innerHTML = `<span class="text-success font-black text-2xl tracking-tighter">HÜKMEN GALİP!</span><br><span class="text-[10px] text-gray-500">Rakip oyundan ayrıldı</span>`;
+    sounds.playSuccess();
   } else {
-    status.innerText = `Kazanan: ${data.winner}`;
-    status.className = "mt-8 text-center text-xl font-bold text-green-500";
+    status.innerHTML = `<span class="${isMeWinner ? 'text-success' : 'text-red-500'} font-black text-2xl tracking-tighter">${isMeWinner ? 'ZAFER!' : 'YENİLGİ!'}</span>`;
+    isMeWinner ? sounds.playSuccess() : sounds.playError();
   }
   
-  // Update board one last time
-  data.board.forEach((mark: string, i: number) => {
-    const cell = document.querySelector(`[data-index="${i}"]`);
-    if (cell && mark) {
-      cell.innerHTML = mark;
-      cell.classList.add(mark === "X" ? "text-blue-400" : "text-red-400");
-    }
-  });
+  const controls = document.createElement("div");
+  controls.className = "mt-8 flex gap-3 justify-center animate-fade";
+  controls.id = "game-over-controls";
 
-  const btn = document.createElement("button");
-  btn.innerText = "Lobiye Dön";
-  btn.className = "mt-4 bg-orange-600 px-6 py-2 rounded-lg font-bold block mx-auto";
-  btn.onclick = () => location.reload();
-  status.appendChild(btn);
+  const retryBtn = document.createElement("button");
+  retryBtn.innerText = "TEKRAR OYNA";
+  retryBtn.className = "btn-primary py-2 px-6 text-xs";
+  retryBtn.onclick = () => {
+    retryBtn.disabled = true;
+    retryBtn.innerText = "BEKLENİYOR...";
+    socket.emit("request_rematch");
+    sounds.playClick();
+  };
+
+  const lobiBtn = document.createElement("button");
+  lobiBtn.innerText = "LOBİYE DÖN";
+  lobiBtn.className = "btn-secondary py-2 px-6 text-xs";
+  lobiBtn.onclick = () => {
+    socket.emit("leave_room");
+    roomScreen.classList.add("hidden");
+    lobbyScreen.classList.remove("hidden");
+    sounds.playClick();
+  };
+
+  controls.appendChild(retryBtn);
+  controls.appendChild(lobiBtn);
+  status.parentNode?.appendChild(controls);
+});
+
+socket.on("rematch_offered", (data: any) => {
+  sounds.playNotify();
+  const status = document.getElementById("game-status")!;
+  const existingControls = document.getElementById("game-over-controls");
+  if (existingControls) existingControls.remove();
+
+  const inviteDiv = document.createElement("div");
+  inviteDiv.className = "rematch-invite mt-6 p-6 panel animate-fade text-center";
+  inviteDiv.innerHTML = `
+    <p class="font-bold mb-4 text-sm uppercase tracking-widest text-white">${data.sender} rövanş istiyor!</p>
+    <div class="flex gap-3 justify-center">
+      <button id="accept-rematch-btn" class="btn-primary py-2 px-6 text-xs">KABUL ET</button>
+      <button id="decline-rematch-btn" class="btn-secondary py-2 px-6 text-xs">REDDET</button>
+    </div>
+  `;
+  status.parentNode?.appendChild(inviteDiv);
+
+  document.getElementById("accept-rematch-btn")!.onclick = () => {
+    socket.emit("accept_rematch");
+    inviteDiv.remove();
+    sounds.playSuccess();
+  };
+  document.getElementById("decline-rematch-btn")!.onclick = () => {
+    inviteDiv.remove();
+    status.innerHTML = '<span class="text-gray-600 font-bold">Rövanş Reddedildi</span>';
+    sounds.playClick();
+  };
 });
 
 socket.on("error", (data: any) => {
-  alert(data.message);
+  sounds.playError();
+  console.error("Game Error:", data.message);
 });

@@ -1,6 +1,8 @@
 import { Server, Socket } from "socket.io";
 import { roomManager } from "../services/roomManager.ts";
 
+import { GameEngine } from "../games/ticTacToe.ts";
+
 /**
  * Ana Socket.io Handler Fonksiyonu
  */
@@ -33,9 +35,82 @@ export function setupGameSockets(io: Server) {
       if (result.success && result.room) {
         socket.join(roomId);
         io.to(roomId).emit("player_joined", result.room);
+        
+        // Sistem Mesajı: Katılma
+        const player = roomManager.getPlayer(socket.id);
+        io.to(roomId).emit("new_message", {
+          sender: "Sistem",
+          text: `${player?.nickname} odaya katıldı.`,
+          timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          isSystem: true
+        });
+
+        // Oda dolduysa (2 kişi) oyunu başlat
+        if (result.room.players.length === 2) {
+          const game = GameEngine[result.room.gameType];
+          if (game) {
+            game.init(result.room);
+            io.to(roomId).emit("game_started", result.room);
+          }
+        }
+
         broadcastRooms(io);
       } else {
         socket.emit("error", { message: result.error });
+      }
+    });
+
+    // Hızlı Eşleşme
+    socket.on("quick_match", () => {
+       const room = roomManager.findQuickMatch();
+       if (room) {
+         // Uygun oda bulundu
+         const result = roomManager.joinRoom(room.id, socket.id);
+         if (result.success && result.room) {
+           socket.join(room.id);
+           io.to(room.id).emit("player_joined", result.room);
+           
+           if (result.room.players.length === 2) {
+             const game = GameEngine[result.room.gameType];
+             if (game) {
+               game.init(result.room);
+               io.to(room.id).emit("game_started", result.room);
+             }
+           }
+           broadcastRooms(io);
+         }
+       } else {
+         // Oda bulunamadı, yeni oda oluştur
+         const player = roomManager.getPlayer(socket.id);
+         const newRoom = roomManager.createRoom(socket.id, `${player?.nickname}'in Hızlı Odası`, "tictactoe");
+         if (newRoom) {
+           socket.join(newRoom.id);
+           socket.emit("room_created", newRoom);
+           broadcastRooms(io);
+         }
+       }
+    });
+
+    // Tekrar Oyna (Rematch)
+    socket.on("request_rematch", () => {
+      const player = roomManager.getPlayer(socket.id);
+      if (player && player.roomId) {
+        // Diğer oyuncuya bildir
+        socket.to(player.roomId).emit("rematch_offered", { sender: player.nickname });
+      }
+    });
+
+    socket.on("accept_rematch", () => {
+      const player = roomManager.getPlayer(socket.id);
+      if (player && player.roomId) {
+        const room = roomManager.getRoom(player.roomId);
+        if (room) {
+          const game = GameEngine[room.gameType];
+          if (game) {
+             game.init(room);
+             io.to(room.id).emit("game_started", room);
+          }
+        }
       }
     });
 
@@ -51,14 +126,24 @@ export function setupGameSockets(io: Server) {
         io.to(player.roomId).emit("new_message", {
           sender: player.nickname,
           text: data.message,
-          timestamp: new Date()
+          timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          isSystem: false
         });
       }
     });
 
-    // Oyun Hamlesi (Tic Tac Toe)
-    socket.on("make_move", (data: { index: number }) => {
-      handleTicTacToeMove(socket, io, data.index);
+    // Genel Oyun Hamlesi Yönetimi
+    socket.on("make_move", (data: any) => {
+      const player = roomManager.getPlayer(socket.id);
+      if (!player || !player.roomId) return;
+
+      const room = roomManager.getRoom(player.roomId);
+      if (!room) return;
+
+      const game = GameEngine[room.gameType];
+      if (game) {
+        game.handleMove(socket.id, room, io, data);
+      }
     });
 
     // Bağlantı Kesilmesi
@@ -72,71 +157,38 @@ export function setupGameSockets(io: Server) {
  * Oyuncunun ayrılma senaryolarını yönetir
  */
 function handlePlayerLeaving(socket: Socket, io: Server) {
+  const player = roomManager.getPlayer(socket.id);
   const result = roomManager.leaveRoom(socket.id);
+  
   if (result.roomId) {
+    // Sistem Mesajı: Ayrılma
+    if (player) {
+      io.to(result.roomId).emit("new_message", {
+        sender: "Sistem",
+        text: `${player.nickname} odadan ayrıldı.`,
+        timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+        isSystem: true
+      });
+    }
+
     socket.leave(result.roomId);
     if (!result.lastPlayerLeft && result.room) {
+      // Eğer oyun devam ediyorsa, kalan oyuncuya bildir
+      if (result.room.status === "playing") {
+        result.room.status = "finished";
+        const winner = result.room.players[0];
+        io.to(result.roomId).emit("game_over", { 
+          winner: winner.nickname, 
+          board: result.room.state?.board || [],
+          forfeit: true 
+        });
+      }
       io.to(result.roomId).emit("player_left", result.room);
     }
     broadcastRooms(io);
   }
   // Eğer disconnect ise player manager'dan tamamen silinmeli
   roomManager.removePlayer(socket.id);
-}
-
-/**
- * Tic Tac Toe Oyun Mantığı
- */
-function handleTicTacToeMove(socket: Socket, io: Server, index: number) {
-  const player = roomManager.getPlayer(socket.id);
-  if (!player || !player.roomId) return;
-
-  const room = roomManager.getRoom(player.roomId);
-  if (!room) return;
-
-  // Oyun başlatma (2 oyuncu olduğunda ve daha önce başlatılmamışsa)
-  if (room.status === "waiting" && room.players.length === 2) {
-    room.status = "playing";
-    room.state = {
-      board: Array(9).fill(null),
-      turn: room.hostId,
-      winner: null
-    };
-  }
-
-  if (room.status !== "playing" || !room.state) return;
-  const state = room.state;
-
-  // Sıra kontrolü
-  if (state.turn !== socket.id || state.board[index] !== null || state.winner) {
-    return;
-  }
-
-  // Hamleyi yap
-  const mark = socket.id === room.hostId ? "X" : "O";
-  state.board[index] = mark;
-  
-  // Kazanan kontrolü
-  const winPatterns = [[0,1,2], [3,4,5], [6,7,8], [0,3,6], [1,4,7], [2,5,8], [0,4,8], [2,4,6]];
-  let winnerMark = null;
-  for (const [a, b, c] of winPatterns) {
-    if (state.board[a] && state.board[a] === state.board[b] && state.board[a] === state.board[c]) {
-      winnerMark = state.board[a];
-      break;
-    }
-  }
-
-  if (winnerMark) {
-    state.winner = socket.id;
-    room.status = "finished";
-    io.to(room.id).emit("game_over", { winner: player.nickname, board: state.board });
-  } else if (state.board.every((c: any) => c !== null)) {
-    room.status = "finished";
-    io.to(room.id).emit("game_over", { draw: true, board: state.board });
-  } else {
-    state.turn = room.players.find(p => p.id !== socket.id)?.id;
-    io.to(room.id).emit("move_made", { playerId: socket.id, index, board: state.board, nextTurn: state.turn });
-  }
 }
 
 /**

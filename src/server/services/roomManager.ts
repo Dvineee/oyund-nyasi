@@ -97,6 +97,15 @@ class RoomManager {
     return {};
   }
 
+  findQuickMatch(): Room | null {
+    for (const room of this.rooms.values()) {
+      if (room.status === "waiting" && room.players.length === 1) {
+        return room;
+      }
+    }
+    return null;
+  }
+
   getAllRooms() {
     return Array.from(this.rooms.values()).map(r => ({
       id: r.id,
