@@ -48,10 +48,14 @@ class SoundManager {
 
 const sounds = new SoundManager();
 const socket: Socket = io({
-  transports: ["websocket", "polling"],
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000
+  transports: ["polling", "websocket"],
+  reconnectionAttempts: 10,
+  reconnectionDelay: 2000,
+  timeout: 20000
 });
+
+// Debug
+(window as any).debugSocket = socket;
 
 // State
 let myId = "";
@@ -59,6 +63,9 @@ let currentRoom: any = null;
 
 console.log("🔌 Socket bağlanmaya çalışıyor...");
 console.log("🌍 Origin:", window.location.origin);
+if (window.location.hostname.includes("vercel.app")) {
+  console.warn("⚠️ Vercel üzerinde çalışıyorsunuz. Eğer backend AIS üzerindeyse, socket ayarlarını güncellemeniz gerekebilir.");
+}
 socket.on("connect", () => {
   console.log("✅ Sunucuya bağlanıldı. ID:", socket.id);
   joinBtn.innerHTML = "PLATFORMA KATIL";
@@ -67,9 +74,15 @@ socket.on("connect", () => {
 });
 
 socket.on("connect_error", (error) => {
-  console.error("❌ Bağlantı hatası:", error);
+  console.error("❌ Bağlantı hatası:", error.message);
+  console.error("Detay:", error);
   joinBtn.innerHTML = "BAĞLANTI HATASI";
   (joinBtn as HTMLButtonElement).disabled = true;
+});
+
+socket.on("reconnect_attempt", (attempt) => {
+  console.log(`🔄 Yeniden bağlanma denemesi: ${attempt}`);
+  joinBtn.innerHTML = `BAĞLANIYOR (${attempt})...`;
 });
 
 socket.on("disconnect", () => {
@@ -111,6 +124,7 @@ joinBtn.onclick = () => {
   const nick = nicknameInput.value.trim();
   console.log("🖱️ Katıl butonu tıklandı. Nickname:", nick);
   if (nick) {
+    console.log("📤 join_platform gönderiliyor:", nick);
     socket.emit("join_platform", nick);
     userInfo.innerText = nick;
     sounds.playSuccess();
@@ -170,6 +184,7 @@ leaveRoomBtn.onclick = () => {
 // --- Socket Events ---
 
 socket.on("platform_joined", (id: string) => {
+  console.log("📥 platform_joined alındı. My ID:", id);
   myId = id;
   loginScreen.classList.add("hidden");
   lobbyScreen.classList.remove("hidden");
