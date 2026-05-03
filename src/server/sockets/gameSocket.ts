@@ -12,6 +12,7 @@ export function setupGameSockets(io: Server) {
 
     // Platforma Katılma
     socket.on("join_platform", (nickname: string) => {
+      console.log(`👤 Oyuncu platforma katılmak istiyor: ${nickname} (ID: ${socket.id})`);
       roomManager.addPlayer(socket.id, nickname);
       socket.emit("platform_joined", socket.id);
       broadcastRooms(io);
@@ -82,7 +83,9 @@ export function setupGameSockets(io: Server) {
        } else {
          // Oda bulunamadı, yeni oda oluştur
          const player = roomManager.getPlayer(socket.id);
-         const newRoom = roomManager.createRoom(socket.id, `${player?.nickname}'in Hızlı Odası`, "tictactoe");
+         const gameTypes = ["tictactoe", "rps"];
+         const randomType = gameTypes[Math.floor(Math.random() * gameTypes.length)];
+         const newRoom = roomManager.createRoom(socket.id, `${player?.nickname}'in Hızlı Odası`, randomType);
          if (newRoom) {
            socket.join(newRoom.id);
            socket.emit("room_created", newRoom);

@@ -8,8 +8,13 @@ class SoundManager {
   private enabled: boolean = true;
 
   private initCtx() {
-    if (!this.ctx) {
-      this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    try {
+      if (!this.ctx) {
+        this.ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+    } catch (e) {
+      console.warn("Ses sistemi başlatılamadı:", e);
+      this.enabled = false;
     }
   }
 
@@ -48,6 +53,15 @@ const socket: Socket = io();
 let myId = "";
 let currentRoom: any = null;
 
+console.log("🔌 Socket bağlanmaya çalışıyor...");
+socket.on("connect", () => {
+  console.log("✅ Sunucuya bağlanıldı. ID:", socket.id);
+});
+
+socket.on("connect_error", (error) => {
+  console.error("❌ Bağlantı hatası:", error);
+});
+
 // DOM Elements
 const loginScreen = document.getElementById("login-screen")!;
 const lobbyScreen = document.getElementById("lobby-screen")!;
@@ -74,10 +88,13 @@ const gameContainer = document.getElementById("game-container")!;
 
 joinBtn.onclick = () => {
   const nick = nicknameInput.value.trim();
+  console.log("🖱️ Katıl butonu tıklandı. Nickname:", nick);
   if (nick) {
     socket.emit("join_platform", nick);
     userInfo.innerText = nick;
     sounds.playSuccess();
+  } else {
+    console.warn("⚠️ Boş takma ad girildi!");
   }
 };
 
@@ -236,7 +253,11 @@ function renderRoom(room: any) {
   });
 
   if (room.players.length === room.maxPlayers) {
-    initTicTacToe(room);
+    if (room.gameType === "tictactoe") {
+      initTicTacToe(room);
+    } else if (room.gameType === "rps") {
+      initRPS(room);
+    }
   } else {
     gameContainer.innerHTML = `
       <div class="text-center space-y-4 py-20">
@@ -364,6 +385,113 @@ socket.on("rematch_offered", (data: any) => {
     status.innerHTML = '<span class="text-gray-600 font-bold">Rövanş Reddedildi</span>';
     sounds.playClick();
   };
+});
+
+function initRPS(room: any) {
+  const state = room.state || { scores: {}, round: 1 };
+  const moves = ["rock", "paper", "scissors"];
+  const moveIcons: any = { rock: "✊", paper: "✋", scissors: "✌️" };
+
+  gameContainer.innerHTML = `
+    <div class="flex flex-col items-center space-y-12">
+      <div class="flex justify-between w-full max-w-md px-4">
+        ${room.players.map((p: any) => `
+          <div class="flex flex-col items-center">
+            <div id="ready-${p.id}" class="w-2 h-2 rounded-full mb-2 bg-gray-700"></div>
+            <span class="text-[10px] font-mono uppercase tracking-widest text-gray-500">${p.nickname}</span>
+            <span id="score-${p.id}" class="text-3xl font-black text-white">${state.scores[p.id] || 0}</span>
+          </div>
+        `).join('<div class="h-10 w-px bg-white/5 my-auto"></div>')}
+      </div>
+
+      <div id="rps-result-area" class="h-32 flex items-center justify-center text-6xl gap-12 animate-fade">
+         <span class="text-gray-800 italic text-sm font-mono">SEÇİMİNİ YAP</span>
+      </div>
+
+      <div class="flex gap-4">
+        ${moves.map(m => `
+          <button data-move="${m}" class="rps-btn w-20 h-20 panel neon-border flex items-center justify-center text-3xl hover:scale-110 active:scale-90 transition-all">
+            ${moveIcons[m]}
+          </button>
+        `).join('')}
+      </div>
+      
+      <div id="game-status" class="text-[10px] font-mono font-black uppercase tracking-[0.3em] text-accent animate-pulse">
+         TUR ${state.round}
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll(".rps-btn").forEach(btn => {
+    btn.onclick = () => {
+      const move = (btn as HTMLElement).dataset.move;
+      socket.emit("make_move", { move });
+      btn.classList.add("bg-accent/20", "border-accent", "shadow-[0_0_20px_var(--color-accent-glow)]");
+      document.querySelectorAll(".rps-btn").forEach(b => { if(b !== btn) b.classList.add("opacity-50", "pointer-events-none") });
+      sounds.playClick();
+    };
+  });
+}
+
+socket.on("player_ready", (data: { playerId: string }) => {
+  const indicator = document.getElementById(`ready-${data.playerId}`);
+  if (indicator) {
+    indicator.classList.remove("bg-gray-700");
+    indicator.classList.add("bg-success", "shadow-[0_0_8px_#00ff88]", "animate-pulse");
+    if (data.playerId !== myId) sounds.playNotify();
+  }
+});
+
+socket.on("round_resolved", (data: any) => {
+  const resultArea = document.getElementById("rps-result-area")!;
+  const icons: any = { rock: "✊", paper: "✋", scissors: "✌️" };
+  const p1Id = Object.keys(data.moves)[0];
+  const p2Id = Object.keys(data.moves)[1];
+
+  resultArea.innerHTML = `
+    <div class="flex flex-col items-center gap-2">
+      <span class="animate-fade">${icons[data.moves[p1Id]]}</span>
+      <span class="text-[8px] text-gray-600">P1</span>
+    </div>
+    <div class="text-accent text-lg font-black italic">VS</div>
+    <div class="flex flex-col items-center gap-2">
+      <span class="animate-fade">${icons[data.moves[p2Id]]}</span>
+      <span class="text-[8px] text-gray-600">P2</span>
+    </div>
+  `;
+
+  // Skorları güncelle
+  Object.keys(data.scores).forEach(pid => {
+    const scoreVal = document.getElementById(`score-${pid}`);
+    if (scoreVal) scoreVal.innerText = data.scores[pid];
+  });
+
+  // Kazanan animasyonu
+  if (data.winnerId) {
+    sounds.playSuccess();
+    const winnerScore = document.getElementById(`score-${data.winnerId}`);
+    winnerScore?.classList.add("text-success", "animate-bounce");
+    setTimeout(() => winnerScore?.classList.remove("text-success", "animate-bounce"), 2000);
+  } else {
+    sounds.playNotify();
+  }
+
+  // 2 saniye sonra yeni tur hazırlığı
+  setTimeout(() => {
+    const moveButtons = document.querySelectorAll(".rps-btn");
+    moveButtons.forEach(b => b.classList.remove("bg-accent/20", "border-accent", "shadow-[0_0_20px_var(--color-accent-glow)]", "opacity-50", "pointer-events-none"));
+    
+    const indicators = document.querySelectorAll("[id^='ready-']");
+    indicators.forEach(ind => {
+      ind.classList.remove("bg-success", "shadow-[0_0_8px_#00ff88]", "animate-pulse");
+      ind.classList.add("bg-gray-700");
+    });
+
+    const status = document.getElementById("game-status");
+    if (status) status.innerText = `TUR ${data.round + 1}`;
+    
+    resultArea.innerHTML = `<span class="text-gray-800 italic text-sm font-mono">SEÇİMİNİ YAP</span>`;
+  }, 2000);
 });
 
 socket.on("error", (data: any) => {
