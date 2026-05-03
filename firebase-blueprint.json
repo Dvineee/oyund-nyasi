@@ -1,0 +1,42 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "Bir oyun odasını temsil eder.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "hostId": { "type": "string" },
+        "players": { "type": "array", "items": { "type": "string" } },
+        "gameType": { "type": "string" },
+        "status": { "type": "string", "enum": ["waiting", "playing", "finished"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "hostId", "players", "gameType", "status", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat Message",
+      "description": "Bir odadaki sohbet mesajı.",
+      "type": "object",
+      "properties": {
+        "roomId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["roomId", "senderId", "senderName", "message", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Oyun odaları koleksiyonu."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": "Chat",
+      "description": "Her odanın kendi sohbet mesajları."
+    }
+  }
+}

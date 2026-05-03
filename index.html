@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Oyun Köşesi - Çok Oyunculu Platform</title>
+    <link rel="stylesheet" href="/src/index.css">
+  </head>
+  <body class="bg-gray-900 text-white font-sans min-h-screen">
+    <div id="app" class="container mx-auto p-4 max-w-4xl">
+      
+      <!-- Giriş Ekranı -->
+      <div id="login-screen" class="flex flex-col items-center justify-center h-[80vh]">
+        <h1 class="text-5xl font-bold mb-8 text-orange-500">Oyun Köşesi</h1>
+        <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
+          <label class="block text-sm font-medium mb-2">Takma Adın</label>
+          <input type="text" id="nickname-input" placeholder="Bir isim girin..." class="w-full p-3 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-orange-500 mb-4">
+          <button id="join-btn" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 rounded-lg transition duration-200">Platforma Katıl</button>
+        </div>
+      </div>
+
+      <!-- Lobi Ekranı -->
+      <div id="lobby-screen" class="hidden">
+        <div class="flex justify-between items-center mb-8">
+          <h2 class="text-3xl font-bold">Oyun Odaları</h2>
+          <div class="flex gap-4">
+            <span id="user-info" class="bg-gray-800 px-4 py-2 rounded-full text-sm"></span>
+            <button id="create-room-btn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-full font-bold">Oda Oluştur</button>
+          </div>
+        </div>
+        <div id="room-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Odalar buraya gelecek -->
+        </div>
+      </div>
+
+      <!-- Oda Ekranı -->
+      <div id="room-screen" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Sol Panel: Oyun Alanı -->
+        <div class="lg:col-span-2 bg-gray-800 p-6 rounded-2xl shadow-xl min-h-[400px] flex flex-col items-center justify-center">
+          <div id="game-container" class="w-full h-full">
+            <!-- Oyun içeriği buraya gelecek -->
+          </div>
+        </div>
+
+        <!-- Sağ Panel: Sohbet ve Oyuncular -->
+        <div class="flex flex-col gap-4">
+          <div class="bg-gray-800 p-4 rounded-2xl shadow-xl">
+            <h3 class="font-bold mb-2 border-bottom border-gray-700 pb-2">Oyuncular</h3>
+            <ul id="player-list" class="space-y-1"></ul>
+          </div>
+          <div class="bg-gray-800 p-4 rounded-2xl shadow-xl flex-grow flex flex-col h-[400px]">
+            <h3 class="font-bold mb-2">Sohbet</h3>
+            <div id="chat-messages" class="flex-grow overflow-y-auto mb-4 space-y-2 text-sm pr-2"></div>
+            <div class="flex gap-2">
+              <input type="text" id="chat-input" placeholder="Mesaj yaz..." class="flex-grow p-2 bg-gray-700 rounded-lg border border-gray-600 focus:outline-none focus:border-orange-500">
+              <button id="send-chat-btn" class="bg-orange-600 px-4 py-2 rounded-lg font-bold">Gönder</button>
+            </div>
+          </div>
+          <button id="leave-room-btn" class="text-gray-400 hover:text-white text-sm text-center">Odadan Ayrıl</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Modals -->
+    <div id="create-room-modal" class="fixed inset-0 bg-black/50 hidden items-center justify-center p-4">
+      <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-sm">
+        <h3 class="text-xl font-bold mb-4">Yeni Oda Oluştur</h3>
+        <input type="text" id="room-name-input" placeholder="Oda ismi..." class="w-full p-3 bg-gray-700 rounded-lg mb-4">
+        <select id="game-type-select" class="w-full p-3 bg-gray-700 rounded-lg mb-4">
+          <option value="tictactoe">Tic Tac Toe</option>
+        </select>
+        <div class="flex gap-2 text-sm">
+           <button id="confirm-create-btn" class="flex-grow bg-green-600 py-2 rounded-lg font-bold">Oluştur</button>
+           <button id="cancel-create-btn" class="px-4 py-2 border border-gray-600 rounded-lg">İptal</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/client/app.ts"></script>
+  </body>
+</html>

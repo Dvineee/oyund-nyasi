@@ -1,0 +1,6 @@
+{
+  "name": "Oyun Köşesi",
+  "description": "Gerçek zamanlı sohbet ve Tic-Tac-Toe içeren gelişmiş bir çok oyunculu mini oyun platformu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
