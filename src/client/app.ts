@@ -146,27 +146,27 @@ socket.on("room_list", (roomsData: any[]) => {
   }
   roomsData.forEach(room => {
     const div = document.createElement("div");
-    div.className = "panel p-5 flex justify-between items-center hover:border-accent transition group cursor-pointer animate-fade";
+    div.className = "panel neon-border p-5 flex justify-between items-center group cursor-pointer animate-fade";
     div.innerHTML = `
       <div class="flex items-center gap-4">
-        <div class="w-12 h-12 bg-neutral-800 rounded-xl flex items-center justify-center group-hover:bg-accent/10 transition">
+        <div class="w-12 h-12 bg-white/5 rounded-xl flex items-center justify-center group-hover:bg-accent/10 transition-colors">
           <span class="text-2xl">${room.gameType === 'tictactoe' ? '❌' : '🎮'}</span>
         </div>
         <div>
-          <h4 class="font-bold text-lg text-white group-hover:text-accent transition font-sans">${room.name}</h4>
-          <p class="text-xs font-mono text-gray-500 uppercase tracking-widest">${room.gameType}</p>
+          <h4 class="font-black text-sm text-white uppercase tracking-tighter group-hover:text-accent transition-colors">${room.name}</h4>
+          <p class="text-[10px] font-mono text-gray-500 uppercase tracking-widest">${room.gameType}</p>
         </div>
       </div>
       <div class="flex items-center gap-6">
         <div class="text-right">
           <div class="flex items-center gap-1.5 justify-end">
-            <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-            <span class="text-sm font-bold font-mono">${room.playerCount}/${room.maxPlayers}</span>
+            <span class="w-2 h-2 rounded-full ${room.status === 'waiting' ? 'bg-success animate-pulse shadow-[0_0_10px_#00ff88]' : 'bg-gray-600'}"></span>
+            <span class="text-xs font-black font-mono">${room.playerCount}/${room.maxPlayers}</span>
           </div>
-          <span class="text-[10px] text-gray-600 uppercase font-bold">${room.status === 'waiting' ? 'Bekliyor' : 'Oynanıyor'}</span>
+          <span class="text-[9px] text-gray-600 uppercase font-black tracking-widest">${room.status === 'waiting' ? 'Waiting' : 'Live'}</span>
         </div>
-        <button class="bg-accent px-4 py-2 rounded-xl text-xs font-bold text-white group-hover:bg-accent-hover transition ${room.playerCount >= room.maxPlayers ? 'opacity-30 pointer-events-none' : ''}">
-          ${room.playerCount >= room.maxPlayers ? 'DOLU' : 'KATIL'}
+        <button class="btn-primary py-2 px-4 !text-[9px]">
+          ${room.playerCount >= room.maxPlayers ? 'FULL' : 'JOIN'}
         </button>
       </div>
     `;
@@ -253,14 +253,15 @@ function initTicTacToe(room: any) {
   const board = room.state?.board || Array(9).fill(null);
   gameContainer.innerHTML = `
     <div class="flex flex-col items-center">
-       <div class="grid grid-cols-3 gap-3 w-full max-w-[320px]">
+       <div class="grid grid-cols-3 gap-4 w-full max-w-[360px]">
           ${[0,1,2,3,4,5,6,7,8].map(i => {
             const mark = board[i] || "";
-            return `<div data-index="${i}" class="cell ${mark === 'X' ? 'text-blue-400' : 'text-red-400'}">${mark}</div>`;
+            const markClass = mark === 'X' ? 'mark-x' : (mark === 'O' ? 'mark-o' : '');
+            return `<div data-index="${i}" class="cell ${markClass}">${mark}</div>`;
           }).join('')}
        </div>
-       <div id="game-status" class="mt-8 text-center text-lg font-mono font-black uppercase tracking-tighter transition-all">
-          ${room.state?.turn === myId ? '<span class="text-success">Sizin Sıranız</span>' : '<span class="text-gray-500">Rakip Sırası</span>'}
+       <div id="game-status" class="mt-12 text-center text-sm font-mono font-black uppercase tracking-[0.2em] transition-all">
+          ${room.state?.turn === myId ? '<span class="text-success animate-neon">Sizin Sıranız</span>' : '<span class="text-gray-600">Rakip Sırası</span>'}
        </div>
     </div>
   `;
@@ -279,17 +280,16 @@ socket.on("move_made", (data: any) => {
   if (cell) {
     const mark = data.playerId === currentRoom.hostId ? "X" : "O";
     cell.innerHTML = mark;
-    cell.classList.add(mark === "X" ? "text-blue-400" : "text-red-400");
-    cell.classList.add("animate-fade");
+    cell.className = `cell ${mark === 'X' ? 'mark-x' : 'mark-o'} animate-fade`;
     sounds.playMove();
   }
   
   const status = document.getElementById("game-status")!;
   if (data.nextTurn === myId) {
-    status.innerHTML = '<span class="text-success">Sizin Sıranız</span>';
+    status.innerHTML = '<span class="text-success animate-neon">Sizin Sıranız</span>';
     sounds.playNotify();
   } else {
-    status.innerHTML = '<span class="text-gray-500">Rakip Sırası</span>';
+    status.innerHTML = '<span class="text-gray-600">Rakip Sırası</span>';
   }
 });
 

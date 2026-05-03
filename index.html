@@ -9,14 +9,26 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 </head>
-<body class="bg-bg text-gray-200">
+<body class="bg-bg text-gray-100 overflow-x-hidden">
+    <!-- Dekoratif Arka Plan Glowları -->
+    <div class="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-accent/10 blur-[120px] -z-10 rounded-full"></div>
+    <div class="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/5 blur-[120px] -z-10 rounded-full"></div>
+
     <!-- Navbar -->
-    <nav class="border-b border-border bg-card/50 backdrop-blur-md sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-6 h-16 flex justify-between items-center">
-            <h1 class="text-xl font-black tracking-tighter text-white">GAMENET<span class="text-accent">.IO</span></h1>
-            <div id="user-info-container" class="hidden flex items-center gap-4">
-                <span id="user-info" class="text-xs font-mono font-bold text-accent uppercase tracking-widest bg-accent/5 px-4 py-1.5 rounded-full border border-accent/20"></span>
-                <button onclick="location.reload()" class="text-xs text-gray-500 hover:text-white transition uppercase font-bold">Çıkış</button>
+    <nav class="border-b border-white/5 bg-black/40 backdrop-blur-2xl sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-accent rounded-lg flex items-center justify-center shadow-[0_0_20px_var(--color-accent-glow)]">
+                    <span class="text-white font-black italic">GN</span>
+                </div>
+                <h1 class="text-xl font-black tracking-[-0.05em] text-white">GAMENET<span class="text-accent">.IO</span></h1>
+            </div>
+            <div id="user-info-container" class="hidden flex items-center gap-6">
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-success shadow-[0_0_8px_#00ff88]"></div>
+                    <span id="user-info" class="text-[10px] font-mono font-black text-white uppercase tracking-[0.2em]"></span>
+                </div>
+                <button onclick="location.reload()" class="text-[10px] text-gray-500 hover:text-accent transition uppercase font-black tracking-widest border-l border-white/10 pl-6 h-10">Logout</button>
             </div>
         </div>
     </nav>
