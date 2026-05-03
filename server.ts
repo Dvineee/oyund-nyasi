@@ -23,7 +23,12 @@ async function startServer() {
     cors: {
       origin: "*",
       methods: ["GET", "POST"]
-    }
+    },
+    transports: ["websocket", "polling"]
+  });
+
+  io.on("connection", (socket) => {
+    console.log(`🔌 Yeni bağlantı: ${socket.id} (Transport: ${socket.conn.transport.name})`);
   });
 
   const PORT = 3000;

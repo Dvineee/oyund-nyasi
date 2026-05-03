@@ -47,7 +47,11 @@ class SoundManager {
 }
 
 const sounds = new SoundManager();
-const socket: Socket = io();
+const socket: Socket = io({
+  transports: ["websocket", "polling"],
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000
+});
 
 // State
 let myId = "";
